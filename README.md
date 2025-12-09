@@ -286,7 +286,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - **Spotify API**: [Spotipy](https://github.com/spotipy-dev/spotipy)
 - **YouTube Music API**: [ytmusicapi](https://github.com/sigma67/ytmusicapi)
-- **Inspiration**: [SpotTransfer](https://github.com/Pushan2005/SpotTransfer) for the browser auth approach
 
 ---
 
@@ -307,3 +306,4 @@ Have questions? Open an issue on GitHub!
 ---
 
 **Made with ❤️ for music lovers who use both Spotify and YouTube Music**
+
