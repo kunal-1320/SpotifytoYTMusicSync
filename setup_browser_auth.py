@@ -8,6 +8,8 @@ No Google Cloud project or OAuth setup needed.
 
 import os
 import json
+# Fix for macOS input() limitation (max 1023 characters)
+import readline
 
 def print_instructions():
     """Print detailed browser-specific instructions."""
@@ -62,21 +64,21 @@ def parse_headers(headers_text):
     """Parse raw request headers into a dictionary."""
     headers = {}
     lines = headers_text.strip().split('\n')
-    
+
     for line in lines:
         line = line.strip()
         if ':' in line:
             key, value = line.split(':', 1)
             headers[key.strip().lower()] = value.strip()
-    
+
     return headers
 
 def main():
     print_instructions()
-    
+
     print("Paste your request headers below (then press Enter twice):")
     print("-" * 70)
-    
+
     # Collect multi-line input
     lines = []
     empty_count = 0
@@ -92,20 +94,20 @@ def main():
                 lines.append(line)
         except EOFError:
             break
-    
+
     headers_text = '\n'.join(lines)
-    
+
     if not headers_text or len(headers_text) < 100:
         print()
         print("❌ Error: Headers seem too short or empty.")
         print("   Make sure you copied the full request headers.")
         input("\nPress Enter to exit...")
         return
-    
+
     # Parse headers
     try:
         headers = parse_headers(headers_text)
-        
+
         # Verify we have the essential headers
         if 'cookie' not in headers:
             print()
@@ -113,7 +115,7 @@ def main():
             print("   Make sure you copied the full request headers including the cookie.")
             input("\nPress Enter to exit...")
             return
-        
+
         # Check if this looks like YouTube Music headers
         if 'music.youtube.com' not in headers.get('origin', '') and \
            'music.youtube.com' not in headers.get('referer', ''):
@@ -124,7 +126,7 @@ def main():
             choice = input("Continue anyway? (y/N): ").strip().lower()
             if choice != 'y':
                 return
-        
+
         # Create auth file with parsed headers
         auth_data = {
             "accept": headers.get("accept", "*/*"),
@@ -135,7 +137,7 @@ def main():
             "x-goog-authuser": headers.get("x-goog-authuser", "0"),
             "origin": headers.get("origin", "https://music.youtube.com")
         }
-        
+
         # Add optional headers if present
         if "authorization" in headers:
             auth_data["authorization"] = headers["authorization"]
@@ -143,26 +145,26 @@ def main():
             auth_data["x-goog-visitor-id"] = headers["x-goog-visitor-id"]
         if "referer" in headers:
             auth_data["referer"] = headers["referer"]
-        
+
         # Save to file
         auth_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_auth.json")
         with open(auth_path, "w") as f:
             json.dump(auth_data, f, indent=2)
-        
+
         print()
         print("✅ Headers saved to browser_auth.json")
         print()
         print("Testing connection...")
-        
+
         # Test the connection with better error handling
         try:
             from ytmusicapi import YTMusic
             ytm = YTMusic(auth_path)
-            
+
             # Try a simple search first (more reliable than get_library_playlists)
             try:
                 search_result = ytm.search('test', filter='songs', limit=1)
-                
+
                 if search_result and len(search_result) > 0:
                     print()
                     print("=" * 70)
@@ -179,7 +181,7 @@ def main():
                     print()
                     print("The headers are saved. Try running the sync to see if it works:")
                     print("  python sync_playlists.py --test-ytmusic")
-                    
+
             except Exception as search_error:
                 error_str = str(search_error)
                 if "401" in error_str or "unauthorized" in error_str.lower():
@@ -209,7 +211,7 @@ def main():
                     print("Try running the sync to see if it works anyway:")
                     print("  python sync_playlists.py --test-ytmusic")
                     print()
-                    
+
         except ImportError:
             print()
             print("❌ ytmusicapi not installed!")
@@ -220,13 +222,12 @@ def main():
             print()
             print("Headers saved. Try testing with:")
             print("  python sync_playlists.py --test-ytmusic")
-    
+
     except Exception as e:
         print()
         print(f"❌ Error: {e}")
         print("   Something went wrong parsing the headers.")
         print("   Make sure you copied the raw request headers correctly.")
-    
     print()
     input("Press Enter to exit...")
 
