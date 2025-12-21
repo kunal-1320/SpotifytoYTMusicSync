@@ -1,5 +1,5 @@
 How to use :
-* git clone https://github.com/yourusername/SpotifytoYTMusicSync.git
+* git clone https://github.com/kunal-1320/SpotifytoYTMusicSync.git
 * cd SpotifytoYTMusicSync
 * pip install -r requirements.txt
 * cp config.example.py config.py
@@ -117,5 +117,6 @@ These files contain your credentials and are git-ignored:
 - `browser_auth.json` - YouTube cookies
 
 **Never commit these files!**
+
 
 
