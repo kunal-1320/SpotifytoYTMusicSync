@@ -27,7 +27,7 @@ pip install -r requirements.txt
 ## Setup
 
 ### 1. Create Config File
-
+in command prompt ---> same location in the directory
 ```bash
 cp config.example.py config.py
 ```
@@ -37,15 +37,15 @@ cp config.example.py config.py
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 2. Create an app
 3. Set Redirect URI to: `http://127.0.0.1:8888/callback`
-4. Copy Client ID and Secret to `config.py`
+4. Copy Client ID and Secret to `config.py`   ---> also can be done from app.py
 
 ### 3. Setup YouTube Music
-
+---> can be also done from app.py
 ```bash
 python setup_browser_auth.py
 ```
 
-Follow the instructions to copy request headers from your browser.
+Follow the instructions to copy request headers from your browser. (use firefox, i haven't test from chrome/brave tho)
 
 ### 4. Add Playlist Mappings
 
@@ -57,7 +57,7 @@ PLAYLIST_MAPPING = {
 }
 ```
 
-**Finding IDs:**
+**Finding IDs:**  When you open you playlists in browser. 
 - Spotify: `https://open.spotify.com/playlist/[ID]`
 - YouTube Music: `https://music.youtube.com/playlist?list=[ID]`
 
@@ -102,7 +102,3 @@ These files contain your credentials and are git-ignored:
 - `browser_auth.json` - YouTube cookies
 
 **Never commit these files!**
-
-## License
-
-MIT
