@@ -7,117 +7,89 @@ Run this file for easy setup and sync operations.
 
 import os
 import sys
-import json
+
+# Add current directory to path for local imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import shared utilities
+from utils.ui import (
+    clear_screen, print_header, print_menu, print_submenu,
+    get_choice, pause, safe_print, print_status,
+    print_success, print_error, print_warning, print_info,
+    print_divider, print_box, Colors
+)
+from utils.clients import (
+    get_spotify_client, get_ytmusic_client,
+    check_spotify_configured, check_ytmusic_configured,
+    test_spotify_connection, test_ytmusic_connection
+)
+
 
 # =============================================================================
-# HELPER FUNCTIONS
+# CONFIG HELPERS
 # =============================================================================
-
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def safe_print(message):
-    """Print with fallback for Unicode issues."""
-    try:
-        print(message)
-    except UnicodeEncodeError:
-        # Replace emoji with ASCII
-        safe = message.encode('ascii', errors='replace').decode('ascii')
-        print(safe)
-
-def print_header(title):
-    clear_screen()
-    print("=" * 60)
-    print(f"  {title}")
-    print("=" * 60)
-    print()
-
-def print_menu(options):
-    for i, option in enumerate(options, 1):
-        safe_print(f"  [{i}] {option}")
-    print(f"  [0] Back / Exit")
-    print()
-
-def get_choice(max_option):
-    while True:
-        try:
-            choice = input("Enter choice: ").strip()
-            if choice == "":
-                continue
-            num = int(choice)
-            if 0 <= num <= max_option:
-                return num
-        except ValueError:
-            pass
-        print("Invalid choice. Please try again.")
-
-def pause():
-    input("\nPress Enter to continue...")
-
-# =============================================================================
-# STATUS CHECKS
-# =============================================================================
-
-def check_spotify_status():
-    """Check if Spotify is configured."""
-    try:
-        import config
-        if config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_ID != "YOUR_SPOTIFY_CLIENT_ID":
-            return True
-    except:
-        pass
-    return False
-
-def check_ytmusic_status():
-    """Check if YouTube Music is configured."""
-    return os.path.exists("browser_auth.json")
-
-
 
 def get_playlist_mapping():
-    """Get current playlist mappings."""
+    """Get current playlist mappings from config."""
     try:
         import importlib
         import config
         importlib.reload(config)
         if hasattr(config, 'PLAYLIST_MAPPING'):
             return config.PLAYLIST_MAPPING
-    except:
+    except Exception:
         pass
     return {}
+
+
+def ensure_config_exists():
+    """Ensure config.py exists, create from example if needed."""
+    if not os.path.exists("config.py"):
+        if os.path.exists("config.example.py"):
+            import shutil
+            shutil.copy("config.example.py", "config.py")
+            return True
+    return os.path.exists("config.py")
+
 
 # =============================================================================
 # SETUP FUNCTIONS
 # =============================================================================
 
 def setup_spotify():
-    print_header("SPOTIFY SETUP")
+    """Interactive Spotify setup."""
+    print_header("SPOTIFY SETUP", "Configure your Spotify API credentials")
+    
     print("You need to create a Spotify Developer App to use this tool.")
     print()
-    print("Steps:")
-    print("  1. Go to: https://developer.spotify.com/dashboard")
-    print("  2. Log in and click 'Create App'")
-    print("  3. Fill in any name and description")
-    print("  4. Set Redirect URI to: http://127.0.0.1:8888/callback")
-    print("  5. Save and get your Client ID and Client Secret")
+    print_box([
+        "1. Go to: https://developer.spotify.com/dashboard",
+        "2. Log in and click 'Create App'",
+        "3. Fill in any name and description",
+        "4. Set Redirect URI to: http://127.0.0.1:8888/callback",
+        "5. Save and get your Client ID and Client Secret"
+    ], "Steps")
     print()
     
     client_id = input("Enter your Spotify Client ID: ").strip()
     if not client_id:
-        print("Cancelled.")
+        print_warning("Cancelled.")
+        pause()
         return False
     
     client_secret = input("Enter your Spotify Client Secret: ").strip()
     if not client_secret:
-        print("Cancelled.")
+        print_warning("Cancelled.")
+        pause()
         return False
     
     # Update config.py
     try:
+        ensure_config_exists()
+        
         with open("config.py", "r") as f:
             content = f.read()
         
-        # Replace the placeholders
         import re
         content = re.sub(
             r'SPOTIFY_CLIENT_ID = "[^"]*"',
@@ -133,65 +105,51 @@ def setup_spotify():
         with open("config.py", "w") as f:
             f.write(content)
         
-        print("\n[OK] Spotify credentials saved!")
+        print_success("Spotify credentials saved!")
         
         # Test connection
-        print("\nTesting Spotify connection...")
-        try:
-            import importlib
-            import config
-            importlib.reload(config)
-            
-            import spotipy
-            from spotipy.oauth2 import SpotifyOAuth
-            
-            sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-                client_id=config.SPOTIFY_CLIENT_ID,
-                client_secret=config.SPOTIFY_CLIENT_SECRET,
-                redirect_uri=config.SPOTIFY_REDIRECT_URI,
-                scope="playlist-read-private playlist-read-collaborative"
-            ))
-            user = sp.current_user()
-            print(f"[OK] Connected as: {user['display_name']}")
-        except Exception as e:
-            print(f"[ERROR] Connection failed: {e}")
-            print("Make sure your credentials are correct and Redirect URI is set.")
+        print_info("Testing Spotify connection...")
+        success, msg, user = test_spotify_connection()
+        if success:
+            print_success(msg)
+        else:
+            print_error(f"Connection failed: {msg}")
+            print_info("Make sure your credentials are correct and Redirect URI is set.")
         
         pause()
-        return True
+        return success
     except Exception as e:
-        print(f"Error saving config: {e}")
+        print_error(f"Error saving config: {e}")
         pause()
         return False
 
+
 def setup_ytmusic():
-    print_header("YOUTUBE MUSIC SETUP")
-    print("Simple 2-minute setup - just copy request headers!")
-    print()
-    print("OPTION 1 - Easiest (Recommended):")
-    print("  Run the setup script for detailed instructions:")
-    print("  → python setup_browser_auth.py")
-    print()
-    print("OPTION 2 - Quick (if you know what you're doing):")
-    print("  1. Go to https://music.youtube.com (make sure you're signed in)")
-    print("  2. Press F12 → Network tab → filter 'browse'")
-    print("  3. Click 'Library' in YouTube Music")
-    print("  4. Find a POST request to 'browse?...'")
-    print()
-    print("  Firefox: Right-click → Copy → Copy Request Headers")
-    print("  Chrome:  Copy everything from 'accept: */*' in Request Headers section")
+    """Interactive YouTube Music setup."""
+    print_header("YOUTUBE MUSIC SETUP", "Simple 2-minute browser authentication")
+    
+    print_box([
+        "OPTION 1 - Easiest (Recommended):",
+        "  Run: python setup_browser_auth.py",
+        "",
+        "OPTION 2 - Quick (if you know what you're doing):",
+        "  1. Go to https://music.youtube.com (signed in)",
+        "  2. Press F12 > Network tab > filter 'browse'",
+        "  3. Click 'Library' in YouTube Music",
+        "  4. Find a POST request to 'browse?...'",
+        "  5. Copy the request headers"
+    ])
     print()
     
     choice = input("Continue with quick setup here? (y/n): ").strip().lower()
     
     if choice != 'y':
-        print("\nRun: python setup_browser_auth.py")
-        print("That script has detailed step-by-step instructions!")
+        print_info("Run: python setup_browser_auth.py")
         pause()
         return False
     
     print("\nPaste your request headers below (press Enter twice when done):")
-    print("-" * 50)
+    print_divider()
     
     lines = []
     empty_count = 0
@@ -211,34 +169,30 @@ def setup_ytmusic():
     headers_text = '\n'.join(lines)
     
     if not headers_text or len(headers_text) < 100:
-        print("\n[X] Headers too short or empty. Cancelled.")
+        print_error("Headers too short or empty. Cancelled.")
         pause()
         return False
     
     try:
         from ytmusicapi import setup
         setup(filepath='browser_auth.json', headers_raw=headers_text)
-        print("\n[OK] YouTube Music browser auth saved!")
+        print_success("YouTube Music browser auth saved!")
         
         # Test connection
-        print("\nTesting YouTube Music connection...")
-        from ytmusicapi import YTMusic
-        ytm = YTMusic('browser_auth.json')
-        result = ytm.search('test', filter='songs', limit=1)
-        if result:
-            print("[OK] YouTube Music connected and working!")
+        print_info("Testing YouTube Music connection...")
+        success, msg = test_ytmusic_connection()
+        if success:
+            print_success(msg)
         else:
-            print("[WARN] Connected but no search results.")
+            print_warning(f"Connection test: {msg}")
         
         pause()
         return True
     except Exception as e:
-        print(f"[ERROR] {e}")
-        print("\nTry running: python setup_browser_auth.py")
-        print("for detailed instructions.")
+        print_error(str(e))
+        print_info("Try running: python setup_browser_auth.py")
         pause()
         return False
-
 
 
 # =============================================================================
@@ -246,31 +200,35 @@ def setup_ytmusic():
 # =============================================================================
 
 def manage_playlists():
+    """Playlist management submenu."""
     while True:
-        print_header("PLAYLIST MANAGEMENT")
+        print_header("PLAYLIST MANAGEMENT", "Manage your playlist mappings")
         
         mapping = get_playlist_mapping()
         
         if mapping:
-            print("Current playlist mappings:")
-            print("-" * 50)
-            for i, (sp_id, yt_id) in enumerate(mapping.items(), 1):
-                print(f"  {i}. Spotify: {sp_id[:25]}...")
-                print(f"     YT Music: {yt_id}")
-                print()
+            print(f"Current mappings ({len(mapping)} total):")
+            print_divider()
+            for i, (sp_id, yt_id) in enumerate(list(mapping.items())[:5], 1):
+                safe_print(f"  {i}. {Colors.DIM}Spotify:{Colors.RESET} {sp_id[:30]}...")
+                safe_print(f"     {Colors.DIM}YTMusic:{Colors.RESET} {yt_id}")
+            if len(mapping) > 5:
+                print(f"  ... and {len(mapping) - 5} more")
+            print()
         else:
-            print("No playlists configured yet.")
+            print_warning("No playlists configured yet.")
+            print()
         
-        print()
         print_menu([
             "Add new playlist mapping",
             "Remove a playlist mapping",
+            "Validate mappings (find broken ones)",
             "View Spotify playlists",
             "View YouTube Music playlists",
             "Create YouTube Music playlist",
         ])
         
-        choice = get_choice(5)
+        choice = get_choice(6)
         
         if choice == 0:
             break
@@ -279,18 +237,23 @@ def manage_playlists():
         elif choice == 2:
             remove_playlist_mapping()
         elif choice == 3:
-            view_spotify_playlists()
+            validate_mappings()
         elif choice == 4:
-            view_ytmusic_playlists()
+            view_spotify_playlists()
         elif choice == 5:
+            view_ytmusic_playlists()
+        elif choice == 6:
             create_ytmusic_playlist_interactive()
 
+
 def add_playlist_mapping():
+    """Add a new playlist mapping."""
     print_header("ADD PLAYLIST MAPPING")
-    print("Enter the playlist IDs to map:")
-    print()
-    print("Spotify ID: From playlist URL, the part after /playlist/")
-    print("YT Music ID: From playlist URL, the part after ?list= (starts with PL)")
+    
+    print_box([
+        "Spotify ID: From playlist URL after /playlist/",
+        "YT Music ID: From playlist URL after ?list= (starts with PL)"
+    ], "How to find IDs")
     print()
     
     spotify_id = input("Spotify Playlist ID: ").strip()
@@ -301,21 +264,18 @@ def add_playlist_mapping():
     if not ytmusic_id:
         return
     
-    # Update config.py
     try:
+        ensure_config_exists()
+        
         with open("config.py", "r") as f:
             content = f.read()
         
-        # Find PLAYLIST_MAPPING and add the new entry
         import re
-        
-        # Find the mapping dict
         pattern = r'(PLAYLIST_MAPPING = \{[^}]*)'
         match = re.search(pattern, content, re.DOTALL)
         
         if match:
             old_mapping = match.group(1)
-            # Add new entry before the closing brace
             new_entry = f'\n    "{spotify_id}": "{ytmusic_id}",'
             new_mapping = old_mapping + new_entry
             content = content.replace(old_mapping, new_mapping)
@@ -323,20 +283,22 @@ def add_playlist_mapping():
             with open("config.py", "w") as f:
                 f.write(content)
             
-            print(f"\n[OK] Added mapping!")
+            print_success("Mapping added!")
             print(f"   Spotify: {spotify_id}")
             print(f"   YT Music: {ytmusic_id}")
         else:
-            print("[ERROR] Could not find PLAYLIST_MAPPING in config.py")
+            print_error("Could not find PLAYLIST_MAPPING in config.py")
     except Exception as e:
-        print(f"Error: {e}")
+        print_error(str(e))
     
     pause()
 
+
 def remove_playlist_mapping():
+    """Remove a playlist mapping."""
     mapping = get_playlist_mapping()
     if not mapping:
-        print("No mappings to remove.")
+        print_warning("No mappings to remove.")
         pause()
         return
     
@@ -346,7 +308,7 @@ def remove_playlist_mapping():
     
     items = list(mapping.items())
     for i, (sp_id, yt_id) in enumerate(items, 1):
-        print(f"  [{i}] {sp_id[:30]}...")
+        print(f"  [{i}] {sp_id[:40]}...")
     print("  [0] Cancel")
     print()
     
@@ -356,12 +318,10 @@ def remove_playlist_mapping():
     
     sp_id_to_remove = items[choice - 1][0]
     
-    # Update config.py
     try:
         with open("config.py", "r") as f:
             content = f.read()
         
-        # Remove the line with this Spotify ID
         import re
         pattern = rf'\s*"{re.escape(sp_id_to_remove)}"\s*:\s*"[^"]*"\s*,?\s*\n?'
         content = re.sub(pattern, '\n', content)
@@ -369,121 +329,179 @@ def remove_playlist_mapping():
         with open("config.py", "w") as f:
             f.write(content)
         
-        print(f"\n[OK] Removed mapping for: {sp_id_to_remove[:30]}...")
+        print_success(f"Removed: {sp_id_to_remove[:40]}...")
     except Exception as e:
-        print(f"Error: {e}")
+        print_error(str(e))
     
     pause()
 
+
+def validate_mappings():
+    """Validate playlist mappings and find broken ones."""
+    print_header("VALIDATE MAPPINGS", "Check for broken YouTube Music playlists")
+    
+    mapping = get_playlist_mapping()
+    if not mapping:
+        print_warning("No mappings to validate.")
+        pause()
+        return
+    
+    if not check_ytmusic_configured():
+        print_error("YouTube Music not configured!")
+        pause()
+        return
+    
+    print_info(f"Checking {len(mapping)} playlist mappings...")
+    print()
+    
+    try:
+        ytm = get_ytmusic_client()
+        
+        # Get user's YTMusic playlists
+        print_info("Fetching your YouTube Music playlists...")
+        yt_playlists = ytm.get_library_playlists(limit=100)
+        valid_yt_ids = set()
+        if yt_playlists:
+            for pl in yt_playlists:
+                if pl and pl.get('playlistId'):
+                    valid_yt_ids.add(pl['playlistId'])
+        
+        # Check each mapping
+        broken_mappings = []
+        valid_count = 0
+        
+        for sp_id, yt_id in mapping.items():
+            if yt_id in valid_yt_ids:
+                valid_count += 1
+            else:
+                # Try to fetch the playlist directly to confirm it's broken
+                try:
+                    ytm.get_playlist(yt_id, limit=1)
+                    valid_count += 1
+                    valid_yt_ids.add(yt_id)
+                except Exception:
+                    broken_mappings.append((sp_id, yt_id))
+        
+        print()
+        print_divider()
+        print_success(f"Valid mappings: {valid_count}")
+        
+        if broken_mappings:
+            print_warning(f"Broken mappings: {len(broken_mappings)}")
+            print()
+            print("The following YouTube Music playlists no longer exist:")
+            print_divider()
+            for sp_id, yt_id in broken_mappings:
+                safe_print(f"  Spotify: {sp_id[:35]}...")
+                safe_print(f"  YTMusic: {Colors.RED}{yt_id}{Colors.RESET} (NOT FOUND)")
+                print()
+            
+            confirm = input("Remove these broken mappings from config? (y/n): ").strip().lower()
+            if confirm == 'y':
+                from config_updater import remove_playlist_mappings
+                sp_ids_to_remove = [sp_id for sp_id, _ in broken_mappings]
+                removed = remove_playlist_mappings(sp_ids_to_remove)
+                print_success(f"Removed {removed} broken mappings!")
+                print_info("Backup saved as config.py.backup")
+            else:
+                print_info("No changes made.")
+        else:
+            print_success("All mappings are valid!")
+        
+    except Exception as e:
+        print_error(str(e))
+        import traceback
+        traceback.print_exc()
+    
+    pause()
+
+
 def view_spotify_playlists():
+    """View user's Spotify playlists."""
     print_header("YOUR SPOTIFY PLAYLISTS")
     
     try:
-        import importlib
-        import config
-        importlib.reload(config)
-        import spotipy
-        from spotipy.oauth2 import SpotifyOAuth
-        
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=config.SPOTIFY_CLIENT_ID,
-            client_secret=config.SPOTIFY_CLIENT_SECRET,
-            redirect_uri=config.SPOTIFY_REDIRECT_URI,
-            scope="playlist-read-private playlist-read-collaborative"
-        ))
-        
+        sp = get_spotify_client()
         playlists = sp.current_user_playlists(limit=20)
         
-        print("Your Spotify Playlists:")
-        print("-" * 60)
+        print(f"Found {len(playlists['items'])} playlists:")
+        print_divider()
+        
         for pl in playlists['items']:
-            safe_print(f"  Name: {pl['name']}")
-            print(f"  ID:   {pl['id']}")
+            safe_print(f"  {Colors.BOLD}{pl['name']}{Colors.RESET}")
+            print(f"  {Colors.DIM}ID: {pl['id']}{Colors.RESET}")
             print()
     except Exception as e:
-        print(f"Error: {e}")
+        print_error(str(e))
     
     pause()
 
+
 def view_ytmusic_playlists():
+    """View user's YouTube Music playlists."""
     print_header("YOUR YOUTUBE MUSIC PLAYLISTS")
     
     try:
-        from ytmusicapi import YTMusic
-        ytm = YTMusic('browser_auth.json')
-        
+        ytm = get_ytmusic_client()
         playlists = ytm.get_library_playlists(limit=20)
         
         if playlists:
-            print("Your YouTube Music Playlists:")
-            print("-" * 60)
+            print(f"Found {len(playlists)} playlists:")
+            print_divider()
+            
             for pl in playlists:
-                safe_print(f"  Name: {pl.get('title', 'Unknown')}")
-                print(f"  ID:   {pl.get('playlistId', 'N/A')}")
+                safe_print(f"  {Colors.BOLD}{pl.get('title', 'Unknown')}{Colors.RESET}")
+                print(f"  {Colors.DIM}ID: {pl.get('playlistId', 'N/A')}{Colors.RESET}")
                 print()
         else:
-            print("No playlists found or could not fetch.")
+            print_warning("No playlists found.")
     except Exception as e:
-        print(f"Error: {e}")
+        print_error(str(e))
     
     pause()
 
+
 def create_ytmusic_playlist_interactive():
-    """Create a new YouTube Music playlist interactively."""
+    """Create a new YouTube Music playlist."""
     print_header("CREATE YOUTUBE MUSIC PLAYLIST")
     
-    # Get playlist name
     playlist_name = input("Enter playlist name: ").strip()
     if not playlist_name:
-        print("Error: Playlist name cannot be empty.")
+        print_error("Playlist name cannot be empty.")
         pause()
         return
     
-    # Get description (optional)
-    description = input("Enter description (optional, press Enter to skip): ").strip()
+    description = input("Enter description (optional): ").strip()
     
-    # Get privacy setting
     print("\nPrivacy options:")
-    print("  [1] Private (only you can see it)")
-    print("  [2] Public (anyone can see it)")
-    print("  [3] Unlisted (anyone with link can see it)")
+    print("  [1] Private (only you)")
+    print("  [2] Public (anyone)")
+    print("  [3] Unlisted (with link)")
     
-    privacy_choice = input("Choose privacy (1-3, default=1): ").strip()
-    
-    privacy_map = {
-        "1": "PRIVATE",
-        "2": "PUBLIC",
-        "3": "UNLISTED",
-        "": "PRIVATE"  # Default
-    }
-    
+    privacy_choice = input("Choose (1-3, default=1): ").strip()
+    privacy_map = {"1": "PRIVATE", "2": "PUBLIC", "3": "UNLISTED", "": "PRIVATE"}
     privacy_status = privacy_map.get(privacy_choice, "PRIVATE")
     
-    # Confirm
-    print("\n" + "-" * 60)
-    safe_print(f"Playlist Name: {playlist_name}")
-    print(f"Description:   {description if description else '(none)'}")
-    print(f"Privacy:       {privacy_status}")
-    print("-" * 60)
+    print_divider()
+    safe_print(f"Name: {playlist_name}")
+    print(f"Description: {description or '(none)'}")
+    print(f"Privacy: {privacy_status}")
+    print_divider()
     
-    confirm = input("\nCreate this playlist? (y/n): ").strip().lower()
-    
-    if confirm != 'y':
-        print("Cancelled.")
+    if input("\nCreate this playlist? (y/n): ").strip().lower() != 'y':
+        print_warning("Cancelled.")
         pause()
         return
     
-    # Create the playlist
     try:
         from create_ytmusic_playlist import create_playlist
         playlist_id = create_playlist(playlist_name, description, privacy_status)
-        print(f"\n[OK] Playlist created successfully!")
-        print(f"Playlist ID: {playlist_id}")
-        print("\nYou can now use this ID to map a Spotify playlist to it.")
+        print_success(f"Created! ID: {playlist_id}")
     except Exception as e:
-        print(f"\n[ERROR] Failed to create playlist: {e}")
+        print_error(str(e))
     
     pause()
+
 
 # =============================================================================
 # AUTO-CREATE YOUTUBE MUSIC PLAYLISTS
@@ -492,12 +510,15 @@ def create_ytmusic_playlist_interactive():
 def auto_create_menu():
     """Submenu for auto-creating YouTube Music playlists."""
     while True:
-        print_header("AUTO-CREATE YOUTUBE MUSIC PLAYLISTS----DOESN'T WORK")
+        print_header("AUTO-CREATE YOUTUBE MUSIC PLAYLISTS", 
+                    "Create YTM playlists from your Spotify library")
         
-        print("This feature will:")
-        print("  1. Fetch all your Spotify playlists")
-        print("  2. Create matching playlists on YouTube Music")
-        print("  3. Update config.py with the mappings")
+        print_box([
+            "This feature will:",
+            "  1. Fetch all your Spotify playlists",
+            "  2. Create matching playlists on YouTube Music",
+            "  3. Update config.py with the mappings"
+        ])
         print()
         
         print_menu([
@@ -516,17 +537,17 @@ def auto_create_menu():
 
 
 def auto_create_ytm_playlists(dry_run=False):
-    """Auto-create YouTube Music playlists from all Spotify playlists."""
-    print_header("AUTO-CREATE YOUTUBE MUSIC PLAYLISTS" + (" (DRY RUN)" if dry_run else ""))
+    """Auto-create YouTube Music playlists from Spotify."""
+    mode = "(DRY RUN)" if dry_run else ""
+    print_header(f"AUTO-CREATE PLAYLISTS {mode}")
     
-    # Check prerequisites
-    if not check_spotify_status():
-        print("[X] Spotify not configured! Set it up first.")
+    if not check_spotify_configured():
+        print_error("Spotify not configured! Set it up first.")
         pause()
         return
     
-    if not check_ytmusic_status():
-        print("[X] YouTube Music not configured! Set it up first.")
+    if not check_ytmusic_configured():
+        print_error("YouTube Music not configured! Set it up first.")
         pause()
         return
     
@@ -534,22 +555,12 @@ def auto_create_ytm_playlists(dry_run=False):
         import importlib
         import config
         importlib.reload(config)
-        import spotipy
-        from spotipy.oauth2 import SpotifyOAuth
-        from ytmusicapi import YTMusic
-        from config_updater import append_playlist_mappings, get_unmapped_playlists
+        from config_updater import append_playlist_mappings
         
-        # Connect to Spotify
-        print("Connecting to Spotify...")
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=config.SPOTIFY_CLIENT_ID,
-            client_secret=config.SPOTIFY_CLIENT_SECRET,
-            redirect_uri=config.SPOTIFY_REDIRECT_URI,
-            scope="playlist-read-private playlist-read-collaborative"
-        ))
+        print_info("Connecting to Spotify...")
+        sp = get_spotify_client()
         
-        # Fetch ALL user's Spotify playlists
-        print("Fetching your Spotify playlists...")
+        print_info("Fetching your Spotify playlists...")
         all_playlists = []
         results = sp.current_user_playlists(limit=50)
         while results:
@@ -559,170 +570,133 @@ def auto_create_ytm_playlists(dry_run=False):
             else:
                 break
         
-        print(f"Found {len(all_playlists)} Spotify playlists.")
-        print()
+        print_success(f"Found {len(all_playlists)} Spotify playlists")
         
         # Get current mapping
-        current_mapping = config.PLAYLIST_MAPPING.copy() if hasattr(config, 'PLAYLIST_MAPPING') else {}
+        current_mapping = getattr(config, 'PLAYLIST_MAPPING', {}).copy()
         
-        # Filter out already mapped playlists
-        unmapped_playlists = []
-        for pl in all_playlists:
-            if pl and pl.get('id') and pl.get('id') not in current_mapping:
-                unmapped_playlists.append(pl)
+        # Find unmapped playlists
+        unmapped = [pl for pl in all_playlists 
+                   if pl and pl.get('id') and pl.get('id') not in current_mapping]
         
-        if not unmapped_playlists:
-            print("[OK] All your Spotify playlists are already mapped!")
-            print(f"Total: {len(all_playlists)} playlists, {len(current_mapping)} already mapped.")
+        if not unmapped:
+            print_success("All your Spotify playlists are already mapped!")
             pause()
             return
         
-        print(f"Found {len(unmapped_playlists)} unmapped playlists.")
-        print(f"Already mapped: {len(current_mapping)}")
+        print_info(f"Found {len(unmapped)} unmapped playlists")
         print()
         
-        # Show what will be created
         print("Playlists to create:")
-        print("-" * 60)
-        for i, pl in enumerate(unmapped_playlists[:10], 1):  # Show first 10
+        print_divider()
+        for i, pl in enumerate(unmapped[:10], 1):
             safe_print(f"  {i}. {pl['name']}")
-        
-        if len(unmapped_playlists) > 10:
-            print(f"  ... and {len(unmapped_playlists) - 10} more")
+        if len(unmapped) > 10:
+            print(f"  ... and {len(unmapped) - 10} more")
         print()
         
-        # Confirmation for actual creation
         if not dry_run:
-            confirm = input(f"Create {len(unmapped_playlists)} playlists on YouTube Music? (yes/no): ").strip().lower()
+            confirm = input(f"Create {len(unmapped)} playlists? (yes/no): ").strip().lower()
             if confirm not in ['yes', 'y']:
-                print("Cancelled.")
+                print_warning("Cancelled.")
                 pause()
                 return
-            print()
-        
-        # Connect to YouTube Music (only if not dry run)
-        if not dry_run:
-            print("Connecting to YouTube Music...")
-            ytm = YTMusic('browser_auth.json')
-        
-        # Process each playlist
-        new_mappings = {}
-        created_count = 0
-        error_count = 0
-        
-        for pl in unmapped_playlists:
-            sp_id = pl['id']
-            name = pl['name']
             
-            try:
-                if dry_run:
-                    safe_print(f"  Would create: {name}")
-                    created_count += 1
-                else:
-                    safe_print(f"  Creating: {name}")
-                    
-                    # Create playlist on YouTube Music
+            print_info("Connecting to YouTube Music...")
+            ytm = get_ytmusic_client()
+            
+            new_mappings = {}
+            for pl in unmapped:
+                try:
+                    safe_print(f"  Creating: {pl['name']}")
                     yt_id = ytm.create_playlist(
-                        title=name,
-                        description=f"Synced from Spotify: {name}",
-                        privacy_status='PRIVATE' if config.YTMUSIC_PLAYLIST_PRIVATE else 'PUBLIC'
+                        title=pl['name'],
+                        description=f"Synced from Spotify",
+                        privacy_status='PRIVATE' if getattr(config, 'YTMUSIC_PLAYLIST_PRIVATE', True) else 'PUBLIC'
                     )
-                    
-                    new_mappings[sp_id] = yt_id
-                    created_count += 1
-                    print(f"    ✓ Created (ID: {yt_id})")
-                    
-            except Exception as e:
-                print(f"    ✗ Error: {e}")
-                error_count += 1
-        
-        print()
-        print("=" * 60)
-        print("SUMMARY")
-        print("=" * 60)
-        print(f"{'Would create' if dry_run else 'Created'}:  {created_count}")
-        print(f"Errors:       {error_count}")
-        print(f"Already mapped: {len(current_mapping)}")
-        print("=" * 60)
-        
-        # Update config.py if not dry run and we created playlists
-        if not dry_run and new_mappings:
-            print()
-            print("Updating config.py...")
-            try:
-                append_playlist_mappings(new_mappings)
-                print(f"[OK] Added {len(new_mappings)} new mappings to config.py!")
-                print("[OK] Backup saved as config.py.backup")
-            except Exception as e:
-                print(f"[ERROR] Failed to update config.py: {e}")
-                print("You'll need to add the mappings manually.")
-                print()
-                print("Add these lines to PLAYLIST_MAPPING in config.py:")
-                print("-" * 60)
-                for sp_id, yt_id in new_mappings.items():
-                    print(f'    "{sp_id}": "{yt_id}",')  
-                print("-" * 60)
+                    new_mappings[pl['id']] = yt_id
+                    print_success(f"    Created (ID: {yt_id})")
+                except Exception as e:
+                    print_error(f"    Failed: {e}")
+            
+            if new_mappings:
+                print_info("Updating config.py...")
+                try:
+                    added = append_playlist_mappings(new_mappings)
+                    print_success(f"Added {added} new mappings to config.py!")
+                except Exception as e:
+                    print_error(f"Failed to update config: {e}")
+        else:
+            print_info(f"Dry run complete. Would create {len(unmapped)} playlists.")
         
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print_error(str(e))
         import traceback
         traceback.print_exc()
     
     pause()
+
 
 # =============================================================================
 # SYNC FUNCTIONS
 # =============================================================================
 
 def run_sync(dry_run=False):
-    print_header("RUNNING SYNC" + (" (DRY RUN)" if dry_run else ""))
+    """Run the playlist sync."""
+    mode = "(DRY RUN)" if dry_run else ""
+    print_header(f"RUNNING SYNC {mode}")
     
     mapping = get_playlist_mapping()
     if not mapping:
-        print("[X] No playlist mappings configured!")
-        print("Go to Playlist Management to add some.")
+        print_error("No playlist mappings configured!")
+        print_info("Go to Playlist Management to add some.")
         pause()
         return
     
-    print(f"Syncing {len(mapping)} playlist(s)...")
+    print_info(f"Syncing {len(mapping)} playlist(s)...")
     print()
     
-    # Import and run sync
     try:
         from sync_playlists import sync_playlists
         sync_playlists(dry_run=dry_run)
     except Exception as e:
-        print(f"Error during sync: {e}")
+        print_error(f"Error during sync: {e}")
     
     pause()
+
 
 # =============================================================================
 # MAIN MENU
 # =============================================================================
 
 def show_status():
-    spotify_ok = check_spotify_status()
-    ytmusic_ok = check_ytmusic_status()
+    """Display current setup status."""
+    spotify_ok = check_spotify_configured()
+    ytmusic_ok = check_ytmusic_configured()
     playlists = get_playlist_mapping()
     
     print("Current Status:")
-    print("-" * 40)
-    print(f"  Spotify:   {'[OK] Ready' if spotify_ok else '[X] Not configured'}")
-    print(f"  YT Music:  {'[OK] Ready' if ytmusic_ok else '[X] Not configured'}")
+    print_divider()
+    print_status("Spotify", spotify_ok)
+    print_status("YouTube Music", ytmusic_ok)
     print(f"  Playlists: {len(playlists)} mapped")
     print()
     
     return spotify_ok, ytmusic_ok
 
+
 def main_menu():
+    """Main application menu."""
+    ensure_config_exists()
+    
     while True:
-        print_header("SPOTIFY TO YOUTUBE MUSIC SYNC")
+        print_header("SPOTIFY TO YOUTUBE MUSIC SYNC", 
+                    "Sync your Spotify playlists to YouTube Music")
         
         spotify_ok, ytmusic_ok = show_status()
         
-        # Show setup wizard if not ready
         if not spotify_ok or not ytmusic_ok:
-            print("[!] Setup required! Select an option below to get started.")
+            print_warning("Setup required! Complete the setup below.")
             print()
         
         print_menu([
@@ -741,16 +715,16 @@ def main_menu():
             break
         elif choice == 1:
             if not spotify_ok:
-                print("\n[X] Please set up Spotify first!")
+                print_error("Please set up Spotify first!")
                 pause()
             elif not ytmusic_ok:
-                print("\n[X] Please set up YouTube Music first!")
+                print_error("Please set up YouTube Music first!")
                 pause()
             else:
                 run_sync(dry_run=False)
         elif choice == 2:
             if not spotify_ok or not ytmusic_ok:
-                print("\n[X] Please complete setup first!")
+                print_error("Please complete setup first!")
                 pause()
             else:
                 run_sync(dry_run=True)
@@ -763,6 +737,7 @@ def main_menu():
         elif choice == 6:
             auto_create_menu()
 
+
 # =============================================================================
 # ENTRY POINT
 # =============================================================================
@@ -772,4 +747,3 @@ if __name__ == "__main__":
         main_menu()
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
-

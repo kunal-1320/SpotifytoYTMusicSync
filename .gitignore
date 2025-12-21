@@ -1,51 +1,38 @@
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-
-# Virtual environments
 venv/
 env/
-ENV/
-.venv
+.venv/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-# ============================================
-# SENSITIVE FILES - DO NOT COMMIT!
-# ============================================
+# ===========================================
+# SENSITIVE FILES - NEVER COMMIT THESE
+# ===========================================
 
-# Spotify & YouTube Music credentials
+# Your config with credentials
 config.py
-*.json
-!requirements.json
+config.py.backup
 
 # Authentication files
 browser_auth.json
 oauth.json
-oauth_credentials.json
-raw_headers.txt
-
-# Spotify cache
 .cache
 .spotify_cache
 
-# Sync data (may contain personal playlist info)
+# Sync data (contains personal playlist info)
 sync_cache.json
 sync_log.txt
 
-# Windows
+# OS files
 Thumbs.db
-desktop.ini
-
-# macOS
 .DS_Store
-.AppleDouble
-.LSOverride
+desktop.ini

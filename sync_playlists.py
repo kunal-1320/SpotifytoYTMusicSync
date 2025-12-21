@@ -444,6 +444,46 @@ def sync_playlists(dry_run: bool = False):
         for spotify_id in config.SPOTIFY_PLAYLIST_IDS:
             playlists_to_sync.append((spotify_id, yt_id))
     
+    # Validate mappings - check if YT playlists still exist
+    log("Validating playlist mappings...")
+    valid_playlists = []
+    broken_mappings = []
+    
+    for spotify_id, yt_id in playlists_to_sync:
+        if not yt_id:
+            valid_playlists.append((spotify_id, yt_id))
+            continue
+        try:
+            # Try to access the playlist
+            ytm.get_playlist(yt_id, limit=1)
+            valid_playlists.append((spotify_id, yt_id))
+        except Exception:
+            broken_mappings.append((spotify_id, yt_id))
+    
+    if broken_mappings:
+        log(f"[!] Found {len(broken_mappings)} broken mapping(s) - YouTube playlists no longer exist:")
+        for sp_id, yt_id in broken_mappings:
+            log(f"    - Spotify: {sp_id[:30]}... -> YT: {yt_id} (REMOVED)")
+        
+        # Auto-remove broken mappings from config
+        try:
+            from config_updater import remove_playlist_mappings
+            sp_ids_to_remove = [sp_id for sp_id, _ in broken_mappings]
+            removed = remove_playlist_mappings(sp_ids_to_remove)
+            log(f"[OK] Removed {removed} broken mapping(s) from config.py")
+        except Exception as e:
+            log(f"[!] Could not auto-remove from config: {e}")
+        log("")
+    
+    playlists_to_sync = valid_playlists
+    
+    if not playlists_to_sync:
+        log("[!] No valid playlists to sync.")
+        return
+        
+    log(f"[OK] {len(playlists_to_sync)} valid playlist(s) to sync")
+
+    
     # Process each playlist pair
     for spotify_playlist_id, yt_playlist_id in playlists_to_sync:
         try:
