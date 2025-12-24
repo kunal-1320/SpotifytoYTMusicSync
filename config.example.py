@@ -48,8 +48,6 @@ PLAYLIST_MAPPING = {
     # Example: "2XgBQIJKjArcbF2Smfjxc2": "PLY3LuyWhQkjoEvyml9yoPi8IOsXQNjE8f",
     
     # Add your mappings below:
-    # "SPOTIFY_PLAYLIST_ID_1": "YTMUSIC_PLAYLIST_ID_1",
-    # "SPOTIFY_PLAYLIST_ID_2": "YTMUSIC_PLAYLIST_ID_2",
 }
 
 # Fallback: If a Spotify playlist is NOT in PLAYLIST_MAPPING,
