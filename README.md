@@ -8,7 +8,7 @@ How to use :
     * 1. setup spotify  --> to check go to manage playlist--->view spotify playlist
     * 2. setup ytmusic  --> same for this 
     * 3. Map the playlist --> little labour work
-    * OR
+    OR
     * 3. Auto Create playlist
     * 4. Dry sync run
     * 5. Main Sync
