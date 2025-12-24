@@ -11,6 +11,8 @@ How to use :
     * 3. Auto Create playlist
     * 4. Dry sync run
     * 5. Main Sync
+     
+NOTE : youtubemus request headers get expired automatically so when you want you can setup ytmusic again
 
 =====================================================================================
 # Spotify to YouTube Music Sync
@@ -117,6 +119,7 @@ These files contain your credentials and are git-ignored:
 - `browser_auth.json` - YouTube cookies
 
 **Never commit these files!**
+
 
 
 
