@@ -1,10 +1,9 @@
-what i found is the algorithm has very high accuracy 
+what i found is, the algorithm has very high accuracy ( atleast eng hindi french etc )
 
 How to use :
 * git clone https://github.com/kunal-1320/SpotifytoYTMusicSync.git
 * cd SpotifytoYTMusicSync
-* pip install -r requirements.txt
-* cp config.example.py config.py
+* pip install -r requirements.txt
 * Then, Run app.py
     * 1. setup spotify  --> to check go to manage playlist--->view spotify playlist
     * 2. setup ytmusic  --> same for this 
