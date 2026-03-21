@@ -1,38 +1,24 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-venv/
-env/
+
+# Environments
 .venv/
+env/
+venv/
+ENV/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# ===========================================
-# SENSITIVE FILES - NEVER COMMIT THESE
-# ===========================================
-
-# Your config with credentials
-config.py
-config.py.backup
-
-# Authentication files
+# Sensitive data
 browser_auth.json
-oauth.json
-.cache
-.spotify_cache
-
-# Sync data (contains personal playlist info)
 sync_cache.json
 sync_log.txt
+.env
 
-# OS files
-Thumbs.db
+# Backups
+*.backup
+*.bak
+
+# OS generated files
 .DS_Store
-desktop.ini
+Thumbs.db

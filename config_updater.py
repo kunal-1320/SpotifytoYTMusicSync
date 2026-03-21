@@ -212,7 +212,7 @@ def get_unmapped_playlists(all_playlists: List[dict], current_mapping: Dict[str,
     Filter out playlists that are already in the current mapping.
     
     Args:
-        all_playlists: List of Spotify playlist objects from spotipy.
+        all_playlists: List of Spotify playlist objects from the scraper.
                       Each should have an 'id' key.
         current_mapping: Dictionary of current Spotify->YTMusic mappings.
     

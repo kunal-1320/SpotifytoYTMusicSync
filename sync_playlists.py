@@ -13,13 +13,22 @@ import os
 import sys
 import json
 import argparse
+import re
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Set, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Try high-performance fuzzy matching
+try:
+    from rapidfuzz import fuzz
+    HAS_RAPIDFUZZ = True
+except ImportError:
+    HAS_RAPIDFUZZ = False
+    from difflib import SequenceMatcher
 
 # Third-party imports
 try:
-    import spotipy
-    from spotipy.oauth2 import SpotifyOAuth
     from ytmusicapi import YTMusic
 except ImportError as e:
     print(f"Missing required package: {e}")
@@ -96,68 +105,240 @@ def mark_as_synced(cache: dict, spotify_playlist_id: str, yt_playlist_id: str, s
 # SPOTIFY FUNCTIONS
 # =============================================================================
 
-def get_spotify_client() -> spotipy.Spotify:
-    """Create and return an authenticated Spotify client."""
-    auth_manager = SpotifyOAuth(
-        client_id=config.SPOTIFY_CLIENT_ID,
-        client_secret=config.SPOTIFY_CLIENT_SECRET,
-        redirect_uri=config.SPOTIFY_REDIRECT_URI,
-        scope="playlist-read-private playlist-read-collaborative",
-        cache_path=".spotify_cache"
-    )
-    return spotipy.Spotify(auth_manager=auth_manager)
+def get_spotify_client():
+    """Create and return a Spotify scraper client."""
+    from utils.clients import get_spotify_client as get_client
+    return get_client()
 
 
-def get_spotify_playlist_tracks(sp: spotipy.Spotify, playlist_id: str) -> list[dict]:
+def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
     """
-    Get all tracks from a Spotify playlist.
-    
-    Returns:
-        List of dicts with 'id', 'name', 'artist', 'album' keys
+    Get all tracks from a Spotify playlist using the scraper + pagination if needed.
     """
-    tracks = []
-    results = sp.playlist_tracks(playlist_id)
+    import requests
+    import re
     
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track.get("name") and track.get("id"):
-                # Get primary artist name (safely handle None values)
+    # Ensure we have a full URL
+    if not playlist_id_or_url.startswith("http"):
+        playlist_url = f"https://open.spotify.com/playlist/{playlist_id_or_url}"
+        playlist_id = playlist_id_or_url
+    else:
+        playlist_url = playlist_id_or_url
+        playlist_id = playlist_id_or_url.split('/')[-1].split('?')[0]
+        
+    tracks_data = []
+    try:
+        log(f"Fetching Spotify playlist: {playlist_url}")
+        
+        # 1. Get real total count from regular page (scraper's embed might be limited to 100)
+        total_count = 0
+        try:
+            # Use scraper's browser to get regular page content
+            regular_html = sp.browser.get_page_content(playlist_url)
+            # Match 239 items in <meta name="description" content="... · 239 items">
+            match = re.search(r'content="Playlist [^"]+· (\d+) items"', regular_html)
+            if match:
+                total_count = int(match.group(1))
+            else:
+                # Fallback check for "total":X in JSON (though usually only in embed)
+                match = re.search(r'"total":(\d+)', regular_html)
+                if match:
+                    total_count = int(match.group(1))
+        except Exception as e:
+            log(f"  [!] Warning: Could not detect true total count, falling back to scraper default: {e}")
+
+        # 2. Get initial tracks from scraper (which uses embed URL)
+        playlist_info = sp.get_playlist_info(playlist_url)
+        
+        if not playlist_info:
+            log(f"  [!] Could not fetch playlist info for: {playlist_url}")
+            return []
+            
+        initial_tracks = playlist_info.get("tracks", [])
+        if total_count == 0:
+            total_count = playlist_info.get("track_count", len(initial_tracks))
+        
+        log(f"  [i] Found {len(initial_tracks)} tracks (Total in playlist: {total_count})")
+        
+        # Add initial tracks
+        for track in initial_tracks:
+            if track.get("name"):
+                track_id = track.get("id") or f"{track['name']}|{track.get('artists', [{}])[0].get('name', 'unknown')}"
                 artists = track.get("artists", [])
                 artist_name = (artists[0].get("name") if artists and artists[0] else None) or "Unknown"
-                
-                tracks.append({
-                    "id": track["id"],  # Spotify track ID for deduplication
+                tracks_data.append({
+                    "id": track_id,
                     "name": track["name"],
                     "artist": artist_name,
-                    "album": track.get("album", {}).get("name", ""),
+                    "album": track.get("album", {}).get("name") or track.get("album_name", ""),
                 })
-        
-        # Handle pagination
-        if results["next"]:
-            results = sp.next(results)
-        else:
-            break
+
+        # Check if we need pagination (Spotify embed usually limits to 100)
+        if total_count > len(tracks_data):
+            log(f"  [i] Large playlist detected. Fetching remaining {total_count - len(tracks_data)} tracks...")
+            
+            # Use the scraper's browser to get the embed page content (cached or fresh)
+            embed_url = playlist_url.replace("open.spotify.com/playlist/", "open.spotify.com/embed/playlist/")
+            try:
+                page_html = sp.browser.get_page_content(embed_url)
+                # Extract accessToken from __NEXT_DATA__
+                match = re.search(r'"accessToken":"([^"]+)"', page_html)
+                if match:
+                    access_token = match.group(1)
+                    offset = len(tracks_data)
+                    # Use a fresh session for pagination (Pathfinder API)
+                    api_session = requests.Session()
+                    
+                    # 3. Get Client Token (Required for Pathfinder)
+                    client_token = None
+                    try:
+                        ct_url = "https://clienttoken.spotify.com/v1/clienttoken"
+                        ct_payload = {
+                            "client_data": {
+                                "client_version": "1.2.87.28.g9713df8f",
+                                "client_id": "d8a5ed958d274c2e8ee717e6a4b0971d",
+                                "js_sdk_data": {
+                                    "device_brand": "unknown", "device_model": "unknown", 
+                                    "os": "windows", "os_version": "NT 10.0", 
+                                    "device_id": "d8caeebb-5238-46c7-8e24-c5d8ce07f27a", 
+                                    "device_type": "computer"
+                                }
+                            }
+                        }
+                        ct_headers = {
+                            "Accept": "application/json", 
+                            "Content-Type": "application/json", 
+                            "Origin": "https://open.spotify.com", 
+                            "Referer": "https://open.spotify.com/",
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+                        }
+                        ct_resp = api_session.post(ct_url, headers=ct_headers, json=ct_payload, timeout=10)
+                        if ct_resp.status_code == 200:
+                            client_token = ct_resp.json().get("granted_token", {}).get("token")
+                    except Exception as ct_err:
+                        log(f"    [!] Error getting client token: {ct_err}. Pagination might fail.")
+                        
+                    if not client_token:
+                        log("    [!] Failed to get client token. Attempting pagination without it (may fail 429).")
+
+                    # 4. Paginate using Pathfinder (GraphQL)
+                    offset = len(tracks_data)
+                    while offset < total_count:
+                        limit = 50 # Pathfinder usually uses 50
+                        pf_url = "https://api-partner.spotify.com/pathfinder/v2/query"
+                        
+                        try:
+                            import time
+                            log(f"    - Fetching batch starting at {offset}...")
+                            time.sleep(1.5) # Modest delay
+                            
+                            pf_payload = {
+                                "variables": {
+                                    "uri": f"spotify:playlist:{playlist_id}",
+                                    "offset": offset,
+                                    "limit": limit
+                                },
+                                "operationName": "fetchPlaylistContents",
+                                "extensions": {
+                                    "persistedQuery": {
+                                        "version": 1,
+                                        "sha256Hash": "346811f856fb0b7e4f6c59f8ebea78dd081c6e2fb01b77c954b26259d5fc6763"
+                                    }
+                                }
+                            }
+                            
+                            pf_headers = {
+                                "Authorization": f"Bearer {access_token}",
+                                "Accept": "application/json",
+                                "Content-Type": "application/json",
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                                "Origin": "https://open.spotify.com",
+                                "Referer": "https://open.spotify.com/"
+                            }
+                            if client_token:
+                                pf_headers["client-token"] = client_token
+                            
+                            resp = api_session.post(pf_url, headers=pf_headers, json=pf_payload, timeout=15)
+                            
+                            if resp.status_code == 200:
+                                page_data = resp.json()
+                                items = page_data.get("data", {}).get("playlistV2", {}).get("content", {}).get("items", [])
+                                if not items:
+                                    break
+                                
+                                batch_count = 0
+                                for item_entry in items:
+                                    # Pathfinder structure is nested: item -> itemV2 -> data
+                                    item_v2 = item_entry.get("itemV2", {})
+                                    track = item_v2.get("data", {})
+                                    
+                                    if track and track.get("__typename") == "Track" and track.get("name"):
+                                        artists_list = track.get("artists", {}).get("items", [])
+                                        artist_name = (artists_list[0].get("profile", {}).get("name") if artists_list else "Unknown")
+                                        
+                                        tracks_data.append({
+                                            "id": track.get("uri", "").split(":")[-1],
+                                            "name": track["name"],
+                                            "artist": artist_name,
+                                            "album": track.get("albumOfTrack", {}).get("name") or "",
+                                        })
+                                        batch_count += 1
+                                    elif track and track.get("__typename") == "Episode" and track.get("name"):
+                                        # Handle podcast episodes too!
+                                        tracks_data.append({
+                                            "id": track.get("uri", "").split(":")[-1],
+                                            "name": track["name"],
+                                            "artist": track.get("showV2", {}).get("data", {}).get("name") or "Podcast",
+                                            "album": "Podcast",
+                                        })
+                                        batch_count += 1
+                                        
+                                offset += len(items)
+                                log(f"    - Success: {len(tracks_data)}/{total_count} tracks now in memory")
+                                if batch_count == 0: # Safety break
+                                    break
+                            elif resp.status_code == 429:
+                                retry_after = int(resp.headers.get("Retry-After", 10))
+                                log(f"    [!] Rate limited (429). Waiting {retry_after}s...")
+                                time.sleep(retry_after)
+                                continue # Retry this batch
+                            else:
+                                log(f"    [!] Pathfinder API failed ({resp.status_code}). Stopping at {len(tracks_data)}.")
+                                break
+                        except Exception as req_err:
+                            log(f"    [!] Request error during pagination: {req_err}")
+                            break
+                    api_session.close()
+                else:
+                    log("    [!] Could not extract access token for pagination. Syncing first 100 tracks only.")
+            except Exception as pe:
+                log(f"    [!] Pagination error: {pe}")
+                
+    except Exception as e:
+        log(f"  [!] Error scraping playlist {playlist_url}: {e}")
     
-    return tracks
+    return tracks_data
 
 
 def test_spotify_auth():
-    """Test Spotify authentication and print user info."""
+    """Test Spotify scraping capability."""
     try:
         sp = get_spotify_client()
-        user = sp.current_user()
-        print(f"✅ Spotify connected as: {user['display_name']} ({user['id']})")
+        print("✅ Spotify Scraper initialized!")
         
-        # List playlists
-        playlists = sp.current_user_playlists(limit=10)
-        print("\nYour Spotify playlists:")
-        for i, pl in enumerate(playlists["items"], 1):
-            print(f"  {i}. {pl['name']} (ID: {pl['id']})")
+        # Try to scrape a common public playlist as a test
+        test_url = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" # Today's Top Hits
+        print(f"Testing scraper with: {test_url}")
+        playlist = sp.get_playlist_info(test_url)
         
-        return True
+        if playlist:
+            print(f"✅ Successfully scraped: {playlist.get('name')} ({len(playlist.get('tracks', []))} tracks)")
+            return True
+        else:
+            print("❌ Scraper returned no data.")
+            return False
     except Exception as e:
-        print(f"❌ Spotify auth failed: {e}")
+        print(f"❌ Spotify test failed: {e}")
         return False
 
 
@@ -214,11 +395,11 @@ def get_ytmusic_playlist_tracks(ytm: YTMusic, playlist_id: str) -> tuple[set[str
     Get all tracks from a YouTube Music playlist.
     
     Returns:
-        Tuple of (video_ids set, normalized_names set, raw_tracks list) for deduplication
+        Tuple of (video_ids set, normalized_names set, processed_tracks list) for deduplication
     """
     video_ids = set()
     track_names = set()
-    raw_tracks = []
+    processed_tracks = []
     
     try:
         playlist = ytm.get_playlist(playlist_id, limit=None)
@@ -237,59 +418,48 @@ def get_ytmusic_playlist_tracks(ytm: YTMusic, playlist_id: str) -> tuple[set[str
                     video_ids.add(vid)
                 
                 # Also get track name for fuzzy matching
-                if track.get("title"):
+                title = track.get("title", "")
+                if title:
                     artists = track.get("artists", [])
-                    # Safe extraction: handle None and empty artist names
                     artist_name = (artists[0].get("name") if artists and artists[0] else None) or "Unknown"
-                    key = normalize_track_key(track["title"], artist_name)
+                    
+                    # Pre-calculate normalized key for instant matching
+                    key = normalize_track_key(title, artist_name)
                     track_names.add(key)
                     
-                    # Store raw data for fuzzy matching
-                    raw_tracks.append({
-                        "title": track["title"].lower(),
+                    # Pre-clean for fuzzy matching (saves time in the loop)
+                    processed_tracks.append({
+                        "title": title.lower(),
                         "artist": artist_name.lower(),
+                        "clean_title": clean_text(title),
+                        "clean_artist": clean_text(artist_name),
                         "videoId": vid
                     })
     except Exception as e:
         log(f"Warning: Could not fetch YT Music playlist tracks: {e}")
     
-    return video_ids, track_names, raw_tracks
+    return video_ids, track_names, processed_tracks
 
 
 def simple_track_match(spotify_name: str, spotify_artist: str, yt_tracks: list[dict]) -> bool:
     """
-    Fuzzy match using SequenceMatcher to find similar songs.
-    Returns True if a match is found with >= 70% similarity.
+    Fuzzy match to find similar songs.
+    Returns True if a match is found with target similarity.
     """
-    from difflib import SequenceMatcher
-    import re
-    
-    def clean_text(text: str) -> str:
-        """Clean text for comparison."""
-        if not text:
-            return ""
-        text = text.lower().strip()
-        # Remove parenthetical content
-        text = re.sub(r'\([^)]*\)', '', text)
-        text = re.sub(r'\[[^\]]*\]', '', text)
-        # Remove punctuation
-        text = re.sub(r'[^\w\s]', '', text)
-        # Collapse spaces
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text
-    
     clean_spotify = clean_text(spotify_name)
     clean_spotify_artist = clean_text(spotify_artist)
     
     for yt in yt_tracks:
-        clean_yt = clean_text(yt["title"])
-        clean_yt_artist = clean_text(yt.get("artist", ""))
+        clean_yt = yt["clean_title"]
+        clean_yt_artist = yt["clean_artist"]
         
-        # Compare song names
-        name_ratio = SequenceMatcher(None, clean_spotify, clean_yt).ratio()
-        
-        # Compare artists
-        artist_ratio = SequenceMatcher(None, clean_spotify_artist, clean_yt_artist).ratio()
+        if HAS_RAPIDFUZZ:
+            # RapidFuzz is 10-100x faster than difflib
+            name_ratio = fuzz.ratio(clean_spotify, clean_yt) / 100.0
+            artist_ratio = fuzz.ratio(clean_spotify_artist, clean_yt_artist) / 100.0
+        else:
+            name_ratio = SequenceMatcher(None, clean_spotify, clean_yt).ratio()
+            artist_ratio = SequenceMatcher(None, clean_spotify_artist, clean_yt_artist).ratio()
         
         # Match if: name >= 70% similar AND artist >= 60% similar
         # OR name >= 85% similar (for cases where artist name differs)
@@ -297,6 +467,26 @@ def simple_track_match(spotify_name: str, spotify_artist: str, yt_tracks: list[d
             return True
     
     return False
+
+# Pre-compiled regex for speed
+RE_PARENS = re.compile(r'\([^)]*\)')
+RE_BRACKETS = re.compile(r'\[[^\]]*\]')
+RE_PUNCT = re.compile(r'[^\w\s]')
+RE_SPACES = re.compile(r'\s+')
+
+def clean_text(text: str) -> str:
+    """Clean text for comparison (optimized)."""
+    if not text:
+        return ""
+    text = text.lower().strip()
+    # Remove parenthetical content
+    text = RE_PARENS.sub('', text)
+    text = RE_BRACKETS.sub('', text)
+    # Remove punctuation
+    text = RE_PUNCT.sub('', text)
+    # Collapse spaces
+    text = RE_SPACES.sub(' ', text).strip()
+    return text
 
 
 def search_ytmusic_song(ytm: YTMusic, track_name: str, artist_name: str) -> Optional[str]:
@@ -347,43 +537,31 @@ def test_ytmusic_auth():
 # SYNC LOGIC
 # =============================================================================
 
+# Common song suffixes
+STR_SUFFIXES = [
+    ' - remaster', ' - remastered', ' remastered', ' - single', 
+    ' - radio edit', ' - live', ' - acoustic', ' - remix',
+    ' - original', ' - version', ' - edit', ' - mix',
+    ' - from', ' - feat', ' feat.', ' ft.', ' featuring'
+]
+
 def normalize_track_key(name: str, artist: str) -> str:
-    """Create a normalized key for track comparison (aggressive normalization)."""
-    import re
+    """Create a normalized key for track comparison (optimized)."""
     
     def clean(text: str) -> str:
-        # Guard against None values
-        if not text:
-            return ""
+        if not text: return ""
         text = text.lower().strip()
+        text = RE_PARENS.sub('', text)
+        text = RE_BRACKETS.sub('', text)
         
-        # Remove anything in parentheses or brackets
-        text = re.sub(r'\([^)]*\)', '', text)
-        text = re.sub(r'\[[^\]]*\]', '', text)
-        
-        # Remove common suffixes/prefixes
-        suffixes = [
-            ' - remaster', ' - remastered', ' remastered', ' - single', 
-            ' - radio edit', ' - live', ' - acoustic', ' - remix',
-            ' - original', ' - version', ' - edit', ' - mix',
-            ' - from', ' - feat', ' feat.', ' ft.', ' featuring'
-        ]
-        for suffix in suffixes:
+        for suffix in STR_SUFFIXES:
             if suffix in text:
                 text = text.split(suffix)[0]
         
-        # Remove punctuation except spaces
-        text = re.sub(r'[^\w\s]', '', text)
-        
-        # Collapse multiple spaces
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        return text
+        text = RE_PUNCT.sub('', text)
+        return RE_SPACES.sub(' ', text).strip()
     
-    clean_name = clean(name)
-    clean_artist = clean(artist)
-    
-    return f"{clean_name}|{clean_artist}"
+    return f"{clean(name)}|{clean(artist)}"
 
 
 def sync_playlists(dry_run: bool = False):
@@ -400,14 +578,11 @@ def sync_playlists(dry_run: bool = False):
     log(f"SYNC STARTED {'(DRY RUN)' if dry_run else ''}")
     log("=" * 60)
     
-    # Validate config
-    if "YOUR_" in config.SPOTIFY_CLIENT_ID or "YOUR_" in config.SPOTIFY_CLIENT_SECRET:
-        log("❌ Error: Please configure your Spotify credentials in config.py")
-        return
-    
     # Check if we have valid playlists to sync
     has_mapping = hasattr(config, "PLAYLIST_MAPPING") and config.PLAYLIST_MAPPING
-    has_legacy = config.SPOTIFY_PLAYLIST_IDS and "YOUR_" not in config.SPOTIFY_PLAYLIST_IDS[0]
+    # Use getattr for safety with SPOTIFY_PLAYLIST_IDS as well
+    spotify_playlist_ids = getattr(config, "SPOTIFY_PLAYLIST_IDS", [])
+    has_legacy = spotify_playlist_ids and len(spotify_playlist_ids) > 0 and "YOUR_" not in spotify_playlist_ids[0]
 
     if not has_mapping and not has_legacy:
         log("❌ Error: Please add at least one Spotify playlist ID in config.py (either in PLAYLIST_MAPPING or SPOTIFY_PLAYLIST_IDS)")
@@ -415,12 +590,11 @@ def sync_playlists(dry_run: bool = False):
     
     # Connect to both services
     try:
-        log("Connecting to Spotify...")
+        log("Initializing Spotify Scraper...")
         sp = get_spotify_client()
-        user = sp.current_user()
-        log(f"✅ Spotify: {user['display_name']}")
+        log("✅ Spotify Scraper ready")
     except Exception as e:
-        log(f"❌ Spotify connection failed: {e}")
+        log(f"❌ Spotify initialization failed: {e}")
         return
     
     try:
@@ -537,9 +711,19 @@ def sync_playlists(dry_run: bool = False):
     # Process each playlist pair
     for spotify_playlist_id, yt_playlist_id in playlists_to_sync:
         try:
-            # Get Spotify playlist info
-            playlist_info = sp.playlist(spotify_playlist_id, fields="name")
-            playlist_name = playlist_info["name"]
+            # Ensure we have a full URL
+            if not spotify_playlist_id.startswith("http"):
+                spotify_url = f"https://open.spotify.com/playlist/{spotify_playlist_id}"
+            else:
+                spotify_url = spotify_playlist_id
+                
+            # Get Spotify playlist info using scraper
+            playlist_info = sp.get_playlist_info(spotify_url)
+            if not playlist_info:
+                log(f"  [!] Could not fetch playlist info for: {spotify_url}")
+                continue
+                
+            playlist_name = playlist_info.get("name", "Unknown Playlist")
             log(f"\n📋 Processing: {playlist_name}")
             
             # Determine target YT playlist
@@ -549,66 +733,87 @@ def sync_playlists(dry_run: bool = False):
             
             log(f"  → Target YT playlist: {yt_playlist_id}")
             
-            # Get existing tracks in this YT Music playlist
-            existing_video_ids, existing_track_names, yt_raw_tracks = get_ytmusic_playlist_tracks(ytm, yt_playlist_id)
+            # --- OPTIMIZATION: PARALLEL DATA FETCHING ---
+            log(f"  [i] Fetching music data from both platforms...")
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                # Start both fetch tasks concurrently
+                future_yt = executor.submit(get_ytmusic_playlist_tracks, ytm, yt_playlist_id)
+                future_sp = executor.submit(get_spotify_playlist_tracks, sp, spotify_playlist_id)
+                
+                # Wait for results
+                existing_video_ids, existing_track_names, yt_raw_tracks = future_yt.result()
+                spotify_tracks = future_sp.result()
             
             # Get Spotify tracks that have already been synced (from local cache)
             already_synced_ids = get_synced_tracks(sync_cache, spotify_playlist_id, yt_playlist_id)
             
-            # Get Spotify tracks
-            spotify_tracks = get_spotify_playlist_tracks(sp, spotify_playlist_id)
             cache_hits = len([t for t in spotify_tracks if t["id"] in already_synced_ids])
             log(f"  Found {len(spotify_tracks)} Spotify tracks ({cache_hits} in sync cache, {len(existing_video_ids)} in YT playlist)")
             total_spotify_tracks += len(spotify_tracks)
             
-            # Sync each track
+            # --- OPTIMIZATION: PARALLEL MATCHING & SEARCH ---
             songs_to_add = []
-            tracks_to_cache = []  # Track IDs to mark as synced after successful add
+            tracks_to_cache = []
             
-            for track in spotify_tracks:
+            def process_track(track):
                 spotify_track_id = track["id"]
-                track_key = normalize_track_key(track["name"], track["artist"])
+                track_name = track["name"]
+                track_artist = track["artist"]
+                track_key = normalize_track_key(track_name, track_artist)
                 
-                # Check 1: Already synced according to our cache?
+                # Fast path: Cache check
                 if spotify_track_id in already_synced_ids:
-                    already_synced += 1
-                    continue
+                    return "cache", spotify_track_id, None
                 
-                # Check 2: Already in YT Music playlist (by normalized name)?
+                # Fast path: Dictionary lookup (Exact/Normalized match)
                 if track_key in existing_track_names:
-                    already_synced += 1
-                    mark_as_synced(sync_cache, spotify_playlist_id, yt_playlist_id, spotify_track_id)
-                    continue
+                    return "synced", spotify_track_id, None
                 
-                # Check 3: Fuzzy match against YT tracks (keyword-based)
-                if simple_track_match(track["name"], track["artist"], yt_raw_tracks):
-                    already_synced += 1
-                    mark_as_synced(sync_cache, spotify_playlist_id, yt_playlist_id, spotify_track_id)
-                    continue
+                # Fuzzy path: More expensive
+                if simple_track_match(track_name, track_artist, yt_raw_tracks):
+                    return "synced", spotify_track_id, None
                 
-                # Search for song on YT Music
-                video_id = search_ytmusic_song(ytm, track["name"], track["artist"])
-                
+                # Search path: Most expensive (Network I/O)
+                video_id = search_ytmusic_song(ytm, track_name, track_artist)
                 if video_id:
-                    # Check 4: is this video ID already in the playlist?
+                    # Double check video ID in existing set
                     if video_id in existing_video_ids:
-                        already_synced += 1
-                        mark_as_synced(sync_cache, spotify_playlist_id, yt_playlist_id, spotify_track_id)
-                        continue
+                        return "synced", spotify_track_id, None
+                    return "new", spotify_track_id, (video_id, track_name, track_artist, track_key)
+                
+                return "not_found", spotify_track_id, None
+
+            log(f"  [i] Analyzing tracks for sync...")
+            # Use a smaller worker pool for search to avoid YT rate limits
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(process_track, t) for t in spotify_tracks]
+                
+                for future in as_completed(futures):
+                    result_type, track_id, data = future.result()
                     
-                    if dry_run:
-                        log(f"  Would add: {track['name']} - {track['artist']}")
-                        newly_added += 1
-                    else:
-                        songs_to_add.append(video_id)
-                        tracks_to_cache.append(spotify_track_id)
-                        existing_video_ids.add(video_id)  # Prevent duplicates in this run
-                        log(f"  + Found: {track['name']} - {track['artist']}")
-                        newly_added += 1
-                    existing_track_names.add(track_key)  # Prevent duplicates
-                else:
-                    log(f"  [!] Not found: {track['name']} - {track['artist']}")
-                    not_found += 1
+                    if result_type == "cache":
+                        already_synced += 1
+                    elif result_type == "synced":
+                        already_synced += 1
+                        mark_as_synced(sync_cache, spotify_playlist_id, yt_playlist_id, track_id)
+                    elif result_type == "new":
+                        video_id, name, artist, key = data
+                        if dry_run:
+                            log(f"  Would add: {name} - {artist}")
+                            newly_added += 1
+                        else:
+                            # Prevent adding same song twice if multiple threads found it
+                            if video_id not in existing_video_ids:
+                                songs_to_add.append(video_id)
+                                tracks_to_cache.append(track_id)
+                                existing_video_ids.add(video_id)
+                                log(f"  + Found: {name} - {artist}")
+                                newly_added += 1
+                            else:
+                                already_synced += 1
+                        existing_track_names.add(key)
+                    elif result_type == "not_found":
+                        not_found += 1
             
             # Add songs in batch (more efficient)
             if songs_to_add and not dry_run:

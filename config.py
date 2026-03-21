@@ -1,72 +1,36 @@
 # =============================================================================
-# SPOTIFY TO YOUTUBE MUSIC SYNC - CONFIGURATION
+# Spotify to YouTube Music Sync - CONFIGURATION
 # =============================================================================
-# Fill in your credentials below. Follow README.md for setup instructions.
-#
-# IMPORTANT: After filling this out, rename this file to config.py
-# DO NOT commit config.py to GitHub - it's in .gitignore for your safety!
 
+# 1. SPOTIFY CONFIGURATION
 # -----------------------------------------------------------------------------
-# SPOTIFY SETTINGS
-# -----------------------------------------------------------------------------
-# Get these from https://developer.spotify.com/dashboard
-# 1. Create a new app
-# 2. Copy Client ID and Client Secret
-# 3. Add http://127.0.0.1:8888/callback as Redirect URI
-
-SPOTIFY_CLIENT_ID = "YOUR_SPOTIFY_CLIENT_ID"
-SPOTIFY_CLIENT_SECRET = "YOUR_SPOTIFY_CLIENT_SECRET"
-SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
-
-# Spotify playlist IDs to sync (you can add multiple)
-# To get playlist ID: Open playlist in Spotify > Share > Copy link
-# The ID is the part after /playlist/ (e.g., 37i9dQZF1DXcBWIGoYBM5M)
+# Add your Spotify playlist IDs here (the part after /playlist/ in the URL)
+# Example: https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M -> '37i9dQZF1DXcBWIGoYBM5M'
 SPOTIFY_PLAYLIST_IDS = [
-    "YOUR_SPOTIFY_PLAYLIST_ID",
-    # "YOUR_PLAYLIST_ID_2",  # Uncomment to add more
+    'YOUR_SPOTIFY_PLAYLIST_ID_HERE',
 ]
 
+# 2. YOUTUBE MUSIC CONFIGURATION
 # -----------------------------------------------------------------------------
-# YOUTUBE MUSIC SETTINGS
-# -----------------------------------------------------------------------------
-# Set up YouTube Music browser authentication by running: python setup_browser_auth.py
+# Default YouTube Music playlist ID where all Spotify tracks will be synced.
+# If left as None, the script will look for a playlist named 'Spotify Sync'
+YTMUSIC_PLAYLIST_ID = None
 
-# =============================================================================
-# PLAYLIST MAPPING (Spotify -> YouTube Music)
-# =============================================================================
-# Map each Spotify playlist ID to a YouTube Music playlist ID
-# 
-# To get Spotify playlist ID:
-#   Open playlist -> Share -> Copy link -> get ID after /playlist/
-#
-# To get YouTube Music playlist ID:
-#   Open playlist -> copy URL -> get ID after ?list= (starts with PL...)
-#
-# Format: "SPOTIFY_ID": "YTMUSIC_ID"
-
-PLAYLIST_MAPPING = {
-    # Example: "2XgBQIJKjArcbF2Smfjxc2": "PLY3LuyWhQkjoEvyml9yoPi8IOsXQNjE8f",
-    
-    # Add your mappings below:
-}
-
-# Fallback: If a Spotify playlist is NOT in PLAYLIST_MAPPING,
-# songs will be added to this default YouTube Music playlist
-YTMUSIC_PLAYLIST_NAME = "Synced from Spotify"
-YTMUSIC_PLAYLIST_ID = None  # Set to a playlist ID to use as default
-
-# Set to True to create the playlist as private (False = public)
+# If True, new playlists created by the script will be private.
 YTMUSIC_PLAYLIST_PRIVATE = True
 
+# 3. PLAYLIST MAPPING (Advanced)
 # -----------------------------------------------------------------------------
-# SYNC SETTINGS
-# -----------------------------------------------------------------------------
-# Set to True to only show what would be synced without actually adding songs
-DRY_RUN = False
+# Map specific Spotify playlists to specific YouTube Music playlists.
+# Format: 'Spotify_Playlist_ID': 'YouTube_Music_Playlist_ID'
+PLAYLIST_MAPPING = {
+    # '37i9dQZF1DXcBWIGoYBM5M': 'PLY3LuyWhQkjp7eLGFbkXP3sVc0How4Em_',
+}
 
-# Path to log file
+# 4. GENERAL SETTINGS
+# -----------------------------------------------------------------------------
+# Maximum results to consider when searching on YouTube Music (1-5 recommended)
+MAX_SEARCH_RESULTS = 3
+
+# File to store logs
 LOG_FILE = "sync_log.txt"
-
-# How many search results to check when finding a song on YT Music
-# Higher = more accurate but slower
-MAX_SEARCH_RESULTS = 5

@@ -13,35 +13,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def get_spotify_client():
     """
-    Create and return an authenticated Spotify client.
+    Create and return a Spotify scraper client.
     
     Returns:
-        spotipy.Spotify: Authenticated Spotify client
+        SpotifyClient: Scraper client
     
     Raises:
-        ImportError: If spotipy is not installed
-        Exception: If authentication fails
+        ImportError: If spotify_scraper is not installed
     """
     try:
-        import spotipy
-        from spotipy.oauth2 import SpotifyOAuth
-        import config
-        import importlib
-        # Reload config to get latest credentials
-        importlib.reload(config)
+        from spotify_scraper import SpotifyClient
+        return SpotifyClient()
     except ImportError as e:
         raise ImportError(f"Required package not installed: {e}")
-    
-    try:
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=config.SPOTIFY_CLIENT_ID,
-            client_secret=config.SPOTIFY_CLIENT_SECRET,
-            redirect_uri=config.SPOTIFY_REDIRECT_URI,
-            scope="playlist-read-private playlist-read-collaborative"
-        ))
-        return sp
     except Exception as e:
-        raise Exception(f"Failed to authenticate with Spotify: {e}")
+        raise Exception(f"Failed to initialize Spotify scraper: {e}")
 
 
 def get_ytmusic_client():
@@ -82,15 +68,15 @@ def get_ytmusic_client():
 
 def test_spotify_connection() -> tuple:
     """
-    Test Spotify connection and return user info.
+    Test Spotify connection by attempting to initialize the scraper.
     
     Returns:
-        Tuple of (success: bool, message: str, user_info: dict or None)
+        Tuple of (success: bool, message: str, info: dict or None)
     """
     try:
-        sp = get_spotify_client()
-        user = sp.current_user()
-        return (True, f"Connected as: {user['display_name']}", user)
+        client = get_spotify_client()
+        # No easy way to get "user info" without API, but we can verify scraping works
+        return (True, "Spotify Scraper initialized (No-API mode)", {"mode": "scraping"})
     except Exception as e:
         return (False, str(e), None)
 
@@ -128,16 +114,12 @@ def test_ytmusic_connection() -> tuple:
 
 
 def check_spotify_configured() -> bool:
-    """Check if Spotify credentials are configured."""
+    """Check if Spotify scraper is available."""
     try:
-        import config
-        if (hasattr(config, 'SPOTIFY_CLIENT_ID') and 
-            config.SPOTIFY_CLIENT_ID and 
-            config.SPOTIFY_CLIENT_ID != "YOUR_SPOTIFY_CLIENT_ID"):
-            return True
-    except Exception:
-        pass
-    return False
+        from spotify_scraper import SpotifyClient
+        return True
+    except ImportError:
+        return False
 
 
 def check_ytmusic_configured() -> bool:
