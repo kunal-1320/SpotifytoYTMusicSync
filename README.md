@@ -1,8 +1,8 @@
-# Spotify to YouTube Music Sync 🎵 → 📺
+## Spotify to YouTube Music Sync
 
 Sync your Spotify playlists to YouTube Music automatically with high-performance, "No-API" technology.
 
-## 🚀 Why this version?
+## Why this version?
 
 This project has been overhauled for **maximum speed** and **zero friction**:
 - **No Spotify API Keys**: Uses a clean web-scraping engine. No developer account needed.
@@ -12,7 +12,7 @@ This project has been overhauled for **maximum speed** and **zero friction**:
 
 ---
 
-## 🛠️ Quick Start
+## Quick Start
 
 ```bash
 # 1. Clone the repository
@@ -30,14 +30,14 @@ pip install -r requirements.txt
 python app.py
 ```
 
-### 📋 Setup Steps:
+### Setup Steps:
 1.  **YTMusic Setup** — Authenticate with YouTube Music (simple browser copy-paste).
 2.  **Add Playlist IDs** — Add your Spotify Playlist ID to `config.py`.
 3.  **Sync Now** — Let the multi-threaded engine do the work.
 
 ---
 
-## ✨ Features
+## Features
 
 - **Concurrent Engine** — Fetches Spotify and YouTube data in parallel to cut wait times by 50%.
 - **No-API Dependency** — Bypasses official Spotify API limits and premium requirements.
@@ -47,7 +47,7 @@ python app.py
 
 ---
 
-## 📖 Detailed Configuration
+## Detailed Configuration
 
 ### 1. YouTube Music Setup
 Run `python setup_browser_auth.py` or use the option in `app.py`.
@@ -67,7 +67,7 @@ PLAYLIST_MAPPING = {
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 - `app.py` — The interactive control center.
 - `sync_playlists.py` — High-performance synchronization engine (Multi-threaded).
@@ -75,10 +75,7 @@ PLAYLIST_MAPPING = {
 - `config.py` — Your local configuration (Git-ignored).
 - `utils/` — Logic for scraper clients, UI formatting, and validation.
 
-## 🔒 Security & Privacy
+## Security & Privacy
 This tool runs **entirely locally**. No data is ever sent to third-party servers.
 - `browser_auth.json` — Stores your local session (Git-ignored).
 - `sync_cache.json` — Stores your sync history (Git-ignored).
-
----
-*Optimized for lovers of speed and music. Created with ❤️*
