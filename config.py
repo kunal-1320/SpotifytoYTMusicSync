@@ -14,7 +14,7 @@ SPOTIFY_PLAYLIST_IDS = [
 # -----------------------------------------------------------------------------
 # Default YouTube Music playlist ID where all Spotify tracks will be synced.
 # If left as None, the script will look for a playlist named 'Spotify Sync'
-YTMUSIC_PLAYLIST_ID = None
+YTMUSIC_PLAYLIST_ID = 'YOUR_YTM_PLAYLIST_ID_HERE'
 
 # If True, new playlists created by the script will be private.
 YTMUSIC_PLAYLIST_PRIVATE = True
@@ -24,7 +24,7 @@ YTMUSIC_PLAYLIST_PRIVATE = True
 # Map specific Spotify playlists to specific YouTube Music playlists.
 # Format: 'Spotify_Playlist_ID': 'YouTube_Music_Playlist_ID'
 PLAYLIST_MAPPING = {
-    # '37i9dQZF1DXcBWIGoYBM5M': 'PLY3LuyWhQkjp7eLGFbkXP3sVc0How4Em_',
+    # 'SPOTIFY_ID': 'YTM_ID',
 }
 
 # 4. GENERAL SETTINGS

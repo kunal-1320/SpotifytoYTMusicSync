@@ -130,24 +130,7 @@ def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
     try:
         log(f"Fetching Spotify playlist: {playlist_url}")
         
-        # 1. Get real total count from regular page (scraper's embed might be limited to 100)
-        total_count = 0
-        try:
-            # Use scraper's browser to get regular page content
-            regular_html = sp.browser.get_page_content(playlist_url)
-            # Match 239 items in <meta name="description" content="... · 239 items">
-            match = re.search(r'content="Playlist [^"]+· (\d+) items"', regular_html)
-            if match:
-                total_count = int(match.group(1))
-            else:
-                # Fallback check for "total":X in JSON (though usually only in embed)
-                match = re.search(r'"total":(\d+)', regular_html)
-                if match:
-                    total_count = int(match.group(1))
-        except Exception as e:
-            log(f"  [!] Warning: Could not detect true total count, falling back to scraper default: {e}")
-
-        # 2. Get initial tracks from scraper (which uses embed URL)
+        # 1. Get initial tracks from scraper (uses embed URL internally)
         playlist_info = sp.get_playlist_info(playlist_url)
         
         if not playlist_info:
@@ -155,10 +138,9 @@ def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
             return []
             
         initial_tracks = playlist_info.get("tracks", [])
-        if total_count == 0:
-            total_count = playlist_info.get("track_count", len(initial_tracks))
+        total_in_metadata = playlist_info.get("track_count", len(initial_tracks))
         
-        log(f"  [i] Found {len(initial_tracks)} tracks (Total in playlist: {total_count})")
+        log(f"  [i] Initial view contains {len(initial_tracks)} tracks. Checking for more...")
         
         # Add initial tracks
         for track in initial_tracks:
@@ -173,11 +155,12 @@ def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
                     "album": track.get("album", {}).get("name") or track.get("album_name", ""),
                 })
 
-        # Check if we need pagination (Spotify embed usually limits to 100)
-        if total_count > len(tracks_data):
-            log(f"  [i] Large playlist detected. Fetching remaining {total_count - len(tracks_data)} tracks...")
+        # Check if we need more (Spotify embed usually limits to 100)
+        # We always check for more if we hit 100, just in case metadata is stale
+        if len(tracks_data) >= 100:
+            log(f"  [i] Checking for additional tracks via Spotify internal API...")
             
-            # Use the scraper's browser to get the embed page content (cached or fresh)
+            # Use the scraper's browser to get the embed page content to extract tokens
             embed_url = playlist_url.replace("open.spotify.com/playlist/", "open.spotify.com/embed/playlist/")
             try:
                 page_html = sp.browser.get_page_content(embed_url)
@@ -223,14 +206,14 @@ def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
 
                     # 4. Paginate using Pathfinder (GraphQL)
                     offset = len(tracks_data)
-                    while offset < total_count:
+                    while True:
                         limit = 50 # Pathfinder usually uses 50
                         pf_url = "https://api-partner.spotify.com/pathfinder/v2/query"
                         
                         try:
                             import time
                             log(f"    - Fetching batch starting at {offset}...")
-                            time.sleep(1.5) # Modest delay
+                            time.sleep(1.0) # Optimized delay
                             
                             pf_payload = {
                                 "variables": {
@@ -264,6 +247,7 @@ def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
                                 page_data = resp.json()
                                 items = page_data.get("data", {}).get("playlistV2", {}).get("content", {}).get("items", [])
                                 if not items:
+                                    log(f"    - Finished: Reached end of playlist.")
                                     break
                                 
                                 batch_count = 0
@@ -294,8 +278,9 @@ def get_spotify_playlist_tracks(sp, playlist_id_or_url: str) -> list[dict]:
                                         batch_count += 1
                                         
                                 offset += len(items)
-                                log(f"    - Success: {len(tracks_data)}/{total_count} tracks now in memory")
-                                if batch_count == 0: # Safety break
+                                log(f"    - Success: {len(tracks_data)} tracks now in memory")
+                                if len(items) < limit:
+                                    log(f"    - Reached end of playlist (received {len(items)}/{limit} items).")
                                     break
                             elif resp.status_code == 429:
                                 retry_after = int(resp.headers.get("Retry-After", 10))
@@ -402,7 +387,8 @@ def get_ytmusic_playlist_tracks(ytm: YTMusic, playlist_id: str) -> tuple[set[str
     processed_tracks = []
     
     try:
-        playlist = ytm.get_playlist(playlist_id, limit=None)
+        # Use a high limit to ensure we get all tracks (limit=None can sometimes truncate at 200)
+        playlist = ytm.get_playlist(playlist_id, limit=10000)
         
         # Check for truncation (API may not return all tracks)
         total_count = playlist.get("trackCount", 0)
@@ -545,23 +531,50 @@ STR_SUFFIXES = [
     ' - from', ' - feat', ' feat.', ' ft.', ' featuring'
 ]
 
+# Pre-compile regex for common suffixes for speed
+COMMON_SUFFIXES_RE = re.compile(
+    r'(?:' + '|'.join(re.escape(s) for s in STR_SUFFIXES) + r')\b',
+    re.IGNORECASE
+)
+
 def normalize_track_key(name: str, artist: str) -> str:
     """Create a normalized key for track comparison (optimized)."""
     
-    def clean(text: str) -> str:
+    def clean(text):
         if not text: return ""
-        text = text.lower().strip()
-        text = RE_PARENS.sub('', text)
-        text = RE_BRACKETS.sub('', text)
-        
-        for suffix in STR_SUFFIXES:
-            if suffix in text:
-                text = text.split(suffix)[0]
-        
-        text = RE_PUNCT.sub('', text)
-        return RE_SPACES.sub(' ', text).strip()
+        text = text.lower()
+        # 1. Remove anything in brackets/parentheses (e.g. "[Official Video]", "(Live)")
+        text = re.sub(r'[\(\[][^\]\)]*[\)\]]', '', text)
+        # 2. Strip soundtrack references like "From 'Movie'" or "- From Movie"
+        text = re.sub(r'[-\s]*\bfrom\b\s+["\'].*?["\']', '', text)
+        text = re.sub(r'[-\s]*\bfrom\b\s+.*$', '', text) # Catch "- from Movie Name" at end
+        # 3. Remove common suffixes like " - Single", " - Remastered"
+        text = re.sub(COMMON_SUFFIXES_RE, '', text)
+        # 4. Remove common noise like "official video", "lyrics", etc.
+        text = re.sub(r'\b(official|video|lyrics|audio|full|hd|4k)\b', '', text)
+        # 5. Remove punctuation
+        text = RE_PUNCT.sub(' ', text) 
+        # 6. Collapse spaces
+        text = RE_SPACES.sub(' ', text).strip()
+        return text
     
-    return f"{clean(name)}|{clean(artist)}"
+    clean_name = clean(name)
+    clean_artist = clean(artist)
+    
+    # YouTube specific: if title is "Artist - Song" or "Song - Artist", 
+    # the clean_name might still contain the artist. Strip it.
+    if clean_artist and clean_artist in clean_name:
+        # Remove artist name from title if it's a distinct part
+        clean_name = clean_name.replace(clean_artist, "").strip()
+        # Collapse any double spaces created by removal
+        clean_name = RE_SPACES.sub(' ', clean_name).strip()
+    
+    # Special case: if stripping the artist left us with nothing, 
+    # fall back to the original clean name
+    if not clean_name:
+        clean_name = clean(name)
+        
+    return f"{clean_name}|{clean_artist}"
 
 
 def sync_playlists(dry_run: bool = False):

@@ -8,17 +8,27 @@ __pycache__/
 env/
 venv/
 ENV/
+bin/
+include/
+lib/
+share/
+pyvenv.cfg
 
 # Sensitive data
 browser_auth.json
 sync_cache.json
 sync_log.txt
 .env
+config.py
 
-# Backups
+# Backups and logs
 *.backup
 *.bak
+*.log
+*.tmp
 
 # OS generated files
 .DS_Store
 Thumbs.db
+desktop.ini
+
