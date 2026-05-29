@@ -1,5 +1,5 @@
 ## Spotify to YouTube Music Sync
-
+Note : In release section there is with api release also I have updated for the without api so just download this repo .
 Sync your Spotify playlists to YouTube Music automatically with high-performance, "No-API" technology.
 
 ## Why this version?
